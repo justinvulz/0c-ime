@@ -108,6 +108,8 @@ Windows、macOS、Linux 安裝包請到官網下載：👉 [0c.biggo.com/downloa
 
 發行版打包請用 [Releases](https://github.com/0c-biggo/0c-ime/releases/latest) 的 `0c-ime-<版本>.tar.xz`：內附現成字典，符合 DFSG，解壓即可建置；已配對的神經模型在另附的 `0c-ime-models-<版本>.tar.xz`。見 [打包與發佈](PACKAGING.md)。
 
+NixOS 以 repo 的 flake 裝成 Fcitx5 addon，見 [NixOS](nix/README.md)。
+
 ## 🛠️ 從原始碼建置
 
 需要 Go 1.26 以上；測試與發佈工具使用 Python 3.11 以上。以下指令在 repo 根目錄執行，不會安裝或重啟桌面輸入法：
