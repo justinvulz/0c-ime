@@ -1,6 +1,6 @@
 # NixOS
 
-repo 根目錄的 `flake.nix` 把靈犀注音建成 Fcitx5 addon：外殼 `lib0c.so`、引擎、`0c-update`、`0c-mcp`、設定程式與字典，以 [Linux 系統安裝](../platforms/linux-system/README.md) 的 `make install` 裝進 Nix store，由 Nix 管理更新。
+[justinvulz/0c-ime](https://github.com/justinvulz/0c-ime/tree/nix-flake) 的 `nix-flake` 分支（上游 [0c-biggo/0c-ime](https://github.com/0c-biggo/0c-ime) 加上這個 flake，跟著上游的 Release 更新）根目錄的 `flake.nix` 把靈犀注音建成 Fcitx5 addon：外殼 `lib0c.so`、引擎、`0c-update`、`0c-mcp`、設定程式與字典，以 [Linux 系統安裝](../platforms/linux-system/README.md) 的 `make install` 裝進 Nix store，由 Nix 管理更新。
 
 | flake 輸出 | 說明 |
 |---|---|
@@ -22,7 +22,7 @@ repo 根目錄的 `flake.nix` 把靈犀注音建成 Fcitx5 addon：外殼 `lib0c
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     zc-ime = {
-      url = "github:0c-biggo/0c-ime";
+      url = "github:justinvulz/0c-ime/nix-flake";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -60,7 +60,7 @@ repo 根目錄的 `flake.nix` 把靈犀注音建成 Fcitx5 addon：外殼 `lib0c
 # /etc/nixos/configuration.nix
 { pkgs, ... }:
 let
-  zc-ime = builtins.getFlake "github:0c-biggo/0c-ime/<commit>";
+  zc-ime = builtins.getFlake "github:justinvulz/0c-ime/<commit>";
 in
 {
   nixpkgs.overlays = [ zc-ime.overlays.default ];
@@ -74,7 +74,7 @@ in
 }
 ```
 
-`<commit>` 固定版本；不帶時每次重建可能取到不同的 commit。用本機的 clone 時寫 `git+file:///path/to/0c-ime`（只讀 Git 追蹤的檔案）。
+`<commit>` 是 `nix-flake` 分支上的 commit，固定版本；寫 `nix-flake` 則每次重建可能取到不同的 commit。用本機的 clone 時寫 `git+file:///path/to/0c-ime?ref=nix-flake`（只讀 Git 追蹤的檔案）。
 
 ## 加入輸入法
 
@@ -117,7 +117,7 @@ in
 這份安裝由 Nix 管理（`share/0c/distribution.json` 的 `updates` 是 `package-manager`）：設定程式的「更新」頁只顯示目前版本，`0c-update` 不會檢查或下載更新。要更新時：
 
 ```sh
-nix flake update zc-ime        # 系統設定是 flake；getFlake 則改 <commit>
+nix flake update zc-ime        # 系統設定是 flake，取 nix-flake 分支最新的 commit；getFlake 則改 <commit>
 sudo nixos-rebuild switch
 ```
 
@@ -128,12 +128,12 @@ sudo nixos-rebuild switch
 ## 只建置不安裝
 
 ```sh
-nix build github:0c-biggo/0c-ime   # 結果連到 ./result；--no-link 不建連結
+nix build github:justinvulz/0c-ime/nix-flake   # 結果連到 ./result；--no-link 不建連結
 ```
 
 ## 換版本（維護者）
 
-`nix/package.nix` 的 `version` 與三個雜湊要一起更新；建置時會核對 Release 的字典與這份原始碼的 `data/dictionary.lock.json` 相符。
+先把 `nix-flake` rebase 到上游的 Release tag（`git fetch upstream --tags && git rebase v<版本>`），再更新 `nix/package.nix` 的 `version` 與三個雜湊；建置時會核對 Release 的字典與這份原始碼的 `data/dictionary.lock.json` 相符。
 
 ```sh
 nix store prefetch-file https://github.com/0c-biggo/0c-ime/releases/download/v<版本>/0c-ime-<版本>.tar.xz          # sourceTarball
