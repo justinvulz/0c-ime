@@ -37,7 +37,7 @@ assert withModels -> withNeural;
 let
   # Bump together with the two release tarball hashes below. The dictionary must match data/dictionary.lock.json
   # of this tree (checked in postPatch).
-  version = "0.2.3";
+  version = "0.2.5";
 
   src = lib.fileset.toSource {
     root = ../.;
@@ -59,12 +59,12 @@ let
   # The compiled dictionary (assets/data) is not in git; it ships in the release source tarball.
   sourceTarball = fetchurl {
     url = "${release}/0c-ime-${version}.tar.xz";
-    hash = "sha256-+LSFRzGM1rnNGoRSJhw2NqKqppS9D6rjOR8MefpxRls=";
+    hash = "sha256-f/of3UunDwDCzwtuEcJ6p3AH0g7mC8mZZ5KSsx2liHQ=";
   };
 
   modelsTarball = fetchurl {
     url = "${release}/0c-ime-models-${version}.tar.xz";
-    hash = lib.fakeHash;
+    hash = "sha256-O3U6EBfM+cAYTCI9r9tA15th+0dl3jwFi716Rsu7f7Q=";
   };
 
   # Only used for its vendored Go modules; the binaries are built by the Makefile below.
