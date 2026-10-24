@@ -131,6 +131,16 @@ sudo nixos-rebuild switch
 nix build github:justinvulz/0c-ime/nix-flake   # 結果連到 ./result；--no-link 不建連結
 ```
 
+## 開發環境
+
+```sh
+nix develop          # 在 repo 根目錄；之後照根目錄 README 的「從原始碼建置」與「參與貢獻」
+make assets MODELS=0 # 第一次：字典放到 assets/data（要神經選字就拿掉 MODELS=0）
+go test ./...
+```
+
+殼裡有 Go（`GOTOOLCHAIN=local`）、gopls、Python 3 與 NumPy／ONNX Runtime（神經 worker）、g++ 與 Fcitx5（`make -C platforms/linux-fcitx5`）、Rust 與 WebKitGTK（設定程式）。
+
 ## 換版本（維護者）
 
 先把 `nix-flake` rebase 到上游的 Release tag（`git fetch upstream --tags && git rebase v<版本>`），再更新 `nix/package.nix` 的 `version` 與三個雜湊；建置時會核對 Release 的字典與這份原始碼的 `data/dictionary.lock.json` 相符。
