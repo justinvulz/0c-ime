@@ -22,10 +22,31 @@ import (
 // 組字中按 ' 只切音節（untonedSeparator）。只在標準排列生效（toneless）。
 // Enter、↓、方向鍵、Tab、標點與切換英文之前，未打完但已是完整音節的注音也先不打聲調就完成；
 // 空白照舊是一聲。關閉時沒有任何音節會帶 zhuyin.UntonedMark，行為與沒有此功能時相同。
+//
+// 注音打一半（設定「注音打一半也能選字」，預設關閉，要先開啟聲調選填）：上面的「已是完整音節」放寬成
+// 「是某個音節的開頭」（zhuyin.LegalPrefix）：ㄓㄍ 是 ㄓ＋ㄍ、ㄋㄏ 是 ㄋ＋ㄏ（不再是同類取代）、ㄓㄨㄍㄨ 是 ㄓㄨ＋ㄍㄨ。
+// 完成的音節是 zhuyin.Abbreviate：還能接成更長音節的帶 zhuyin.PartialMark，在音節格展開成所有以它開頭的音節，
+// 比打出的更長的帶罰分（input.CompletionPenalty），打得越完整越準。不完整的開頭後面打聲調（ㄍˊ）照舊原樣留下。
 
 // toneless 回報聲調選填是否生效：只在標準排列。倚天 41 鍵的 ' 是 ㄘ（沒有分隔鍵），許氏一個鍵兼聲母、韻母與聲調，
 // 「接不上就開新音節」的規則在那裡不成立；設定保留，切回標準排列就照舊（同混打，#83、#183）。
 func (s *Session) toneless() bool { return s.Toneless && s.layout == layout.Standard }
+
+// partial 回報注音打一半是否生效：要聲調選填也生效（同樣只在標準排列）。
+func (s *Session) partial() bool { return s.PartialSyllables && s.toneless() }
+
+// finishable 回報未打完的注音 cur 是否可以不打聲調就完成：完整音節；注音打一半時只要是某個音節的開頭。
+func (s *Session) finishable(cur zhuyin.Syllable) bool {
+	return cur.Legal() || s.partial() && zhuyin.LegalPrefix(cur)
+}
+
+// untone 回傳不打聲調就完成的音節：注音打一半時是 zhuyin.Abbreviate，否則是 zhuyin.Untone。
+func (s *Session) untone(base zhuyin.Syllable) zhuyin.Syllable {
+	if s.partial() {
+		return zhuyin.Abbreviate(base)
+	}
+	return zhuyin.Untone(base)
+}
 
 // untonedSeparator 處理聲調選填時的 '（負責人 2026-10-22 決定，同 RIME 的分隔鍵）：組字中按 ' 只切音節、不出頓號——
 // 未打完而已是完整音節的注音不打聲調就完成，下一個注音開始新的音節（ㄒㄧ'ㄢ → 西安）；沒有未打完的注音（剛打完聲調）
@@ -49,8 +70,8 @@ func (s *Session) untonedBreak(sym rune) bool {
 		return false
 	}
 	cur := zhuyin.Syllable(s.comp.String())
-	if !cur.Legal() {
-		return false // 還不是完整音節：照原本的取代規則
+	if !s.finishable(cur) {
+		return false // 還不是完整音節（注音打一半時：還不是任何音節的開頭）：照原本的取代規則
 	}
 	if s.comp.Slot(cl) == 0 && lastClass(s.comp) < cl && zhuyin.LegalPrefix(zhuyin.Syllable(string(cur)+string(sym))) {
 		return false // 接得上：ㄒㄧ＋ㄢ 是 ㄒㄧㄢ
@@ -68,14 +89,14 @@ func lastClass(c zhuyin.Composer) zhuyin.Class {
 	return last
 }
 
-// finishUntoned 把未打完、但已是完整音節的注音當成沒打聲調的音節收進組字。
-// 沒開聲調選填、沒有未打完的注音，或注音還不是完整音節時不動作，回傳 false。
+// finishUntoned 把未打完、但已是完整音節（注音打一半時：某個音節的開頭）的注音當成沒打聲調的音節收進組字。
+// 沒開聲調選填、沒有未打完的注音，或注音還不能完成時不動作，回傳 false。
 func (s *Session) finishUntoned() bool {
 	if !s.toneless() || s.comp.Empty() {
 		return false
 	}
 	base := zhuyin.Syllable(s.comp.String())
-	if !base.Legal() {
+	if !s.finishable(base) {
 		return false
 	}
 	before := s.comp
@@ -84,7 +105,7 @@ func (s *Session) finishUntoned() bool {
 	// 否則 Enter 送出的會是整段的統計結果，前面神經改過的字也被換回去。
 	allow := s.allowRerank
 	s.allowRerank = true
-	s.completeSyllable(before, zhuyin.Untone(base))
+	s.completeSyllable(before, s.untone(base))
 	s.allowRerank = allow
 	return true
 }
@@ -263,4 +284,18 @@ func (s *Session) rejectedReadings() []personal.RejectedSeg {
 // untonedTouches 回報 [start, end) 是否有讀音沒能換回詞庫讀音的沒打聲調音節；這種段落不學習。
 func untonedTouches(resolved []zhuyin.Syllable, start, end int) bool {
 	return end <= len(resolved) && zhuyin.HasUntoned(resolved[start:end])
+}
+
+// maxPartialCandidates 是候選範圍有注音打一半的音節時，以上下文評分的詞面數上限（decode.Window.MaxCandidates）：
+// 單獨一個 ㄓ 就有兩千多個字，全部依前後文評分要上百毫秒；先依無上下文機率挑前面的，候選窗也只翻得到前幾頁。
+const maxPartialCandidates = 200
+
+// abbreviatedIn 回報 s.syls[start:end) 是否有注音打一半的音節。
+func (s *Session) abbreviatedIn(start, end int) bool {
+	for _, y := range s.syls[start:end] {
+		if y.Abbreviated() {
+			return true
+		}
+	}
+	return false
 }

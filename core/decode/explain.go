@@ -18,9 +18,11 @@ type Contribution struct {
 	SystemProbability   float64  `json:"system_probability"`
 	ReadingWeight       float64  `json:"reading_weight"`
 	InputCost           float64  `json:"input_cost"`
-	Continuation        float64  `json:"continuation"`
-	FrequencyScale      float64  `json:"frequency_scale"`
-	Mass                float64  `json:"mass"`
+	// CompletionPenalty 是注音打一半時補完音節的罰分（input.Hyp.Penalty 的和），只計分、不算輸入成本。
+	CompletionPenalty float64 `json:"completion_penalty,omitempty"`
+	Continuation      float64 `json:"continuation"`
+	FrequencyScale    float64 `json:"frequency_scale"`
+	Mass              float64 `json:"mass"`
 }
 
 type ExplainedSegment struct {
@@ -43,7 +45,7 @@ type Explanation struct {
 	Segments        []ExplainedSegment `json:"segments"`
 }
 
-func (d *Decoder) contribution(start, end int, left string, e lexicon.Entry, cost, cont float64) Contribution {
+func (d *Decoder) contribution(start, end int, left string, e lexicon.Entry, cost, pen, cont float64) Contribution {
 	p := d.Score.Prob(left, e.Surface)
 	adjusted := d.arcProbability(start, end, left, e)
 	scale := 1.0
@@ -59,7 +61,7 @@ func (d *Decoder) contribution(start, end int, left string, e lexicon.Entry, cos
 		r[i] = string(y)
 	}
 	return Contribution{Word: e.Surface, Reading: r, LanguageProbability: p, SystemProbability: sys, ReadingWeight: e.PRW,
-		InputCost: cost, Continuation: cont, FrequencyScale: scale, Mass: adjusted * e.PRW * math.Exp(-cost) * cont}
+		InputCost: cost, CompletionPenalty: pen, Continuation: cont, FrequencyScale: scale, Mass: adjusted * e.PRW * math.Exp(-cost-pen) * cont}
 }
 
 // ExplainBest 僅供離線診斷；不在逐鍵熱路徑收集或保存文字。
@@ -90,10 +92,10 @@ func (d *Decoder) ExplainBest(lat input.Lattice, locks map[int]Lock, prefix bool
 				if len(c.e.Reading) > g.End-g.Start && d.Continue > 0 {
 					cont = d.Continue
 				}
-				v := d.contribution(g.Start, g.End, left, c.e, c.cost, cont)
+				v := d.contribution(g.Start, g.End, left, c.e, c.cost, c.pen, cont)
 				v.LanguageProbability = d.Score.Prob(left, c.e.Surface)
 				v.FrequencyScale = 1 // 前綴延伸沿用補全的頻率模型。
-				v.Mass = v.LanguageProbability * v.ReadingWeight * math.Exp(-v.InputCost) * cont
+				v.Mass = v.LanguageProbability * v.ReadingWeight * math.Exp(-v.InputCost-v.CompletionPenalty) * cont
 				if i, ok := seen[v.Word]; ok {
 					if v.Mass > part.Contributions[i].Mass {
 						part.Contributions[i] = v
@@ -105,13 +107,13 @@ func (d *Decoder) ExplainBest(lat input.Lattice, locks map[int]Lock, prefix bool
 			}
 		} else {
 			best := Contribution{}
-			d.spans(lat[:g.End], g.Start, func(reading []zhuyin.Syllable, cost float64) {
+			d.spans(lat[:g.End], g.Start, func(reading []zhuyin.Syllable, cost, pen float64) {
 				if len(reading) != g.End-g.Start {
 					return
 				}
 				for _, e := range d.Lex.Exact(reading) {
 					if e.Surface == g.Word {
-						v := d.contribution(g.Start, g.End, left, e, cost, 1)
+						v := d.contribution(g.Start, g.End, left, e, cost, pen, 1)
 						if v.Mass > best.Mass {
 							best = v
 						}

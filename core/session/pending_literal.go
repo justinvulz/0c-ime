@@ -24,6 +24,8 @@ type pendingLiteral struct {
 	prefix bool
 	// untoned：聲調選填時沒打聲調就完成的音節（#150）；畫面同一聲（不標聲調），收回解碼時仍不限聲調。
 	untoned bool
+	// partial：注音打一半時完成的音節（zhuyin.PartialMark），收回解碼時仍是任何以它開頭的音節。
+	partial bool
 }
 
 func (p pendingLiteral) end() int { return p.start + len([]rune(p.composer.String())) }
@@ -37,6 +39,9 @@ func (p pendingLiteral) mark() int {
 }
 
 func (p pendingLiteral) syllable() zhuyin.Syllable {
+	if p.partial {
+		return zhuyin.Abbreviate(zhuyin.Syllable(p.composer.String()))
+	}
 	if p.untoned {
 		return zhuyin.Untone(zhuyin.Syllable(p.composer.String()))
 	}
@@ -89,7 +94,7 @@ func (s *Session) restorePendingLiteral() {
 func (s *Session) insertSyllableLiteral(comp zhuyin.Composer, syl zhuyin.Syllable) {
 	p := pendingLiteral{start: s.cursor, composer: comp, tone: syl.ToneOf()}
 	if syl.Untoned() {
-		p.tone, p.untoned = 1, true // 沒打聲調（#150）：照一聲的樣子原樣留下，不標聲調
+		p.tone, p.untoned, p.partial = 1, true, syl.Abbreviated() // 沒打聲調（#150）：照一聲的樣子原樣留下，不標聲調
 	}
 	s.insertLiteral(syl.Text())
 	s.pendingLiterals = append(s.pendingLiterals, p)

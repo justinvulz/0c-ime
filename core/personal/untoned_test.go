@@ -35,3 +35,27 @@ func TestUntonedSyllablesMatchStoredCorrections(t *testing.T) {
 		}
 	}
 }
+
+// 注音打一半：打出的注音是紀錄讀音的開頭就相容（ㄗ、ㄗㄞ 都涵蓋 ㄗㄞˋ），不同開頭的不相容。
+func TestPartialSyllablesMatchStoredCorrections(t *testing.T) {
+	m := evidenceModel()
+	m.Learn(zaiCorrection("在", "ㄏㄞˇ"))
+	for _, typed := range [][]zhuyin.Syllable{
+		{zhuyin.Abbreviate("ㄗ"), zhuyin.Abbreviate("ㄏ")},
+		{zhuyin.Abbreviate("ㄗ"), "ㄏㄞˇ"},
+		{"ㄗㄞˋ", zhuyin.Abbreviate("ㄏ")},
+	} {
+		p := m.CorrectionPenalty(typed, nil)
+		if p == nil || p(0, 1, "再") <= 0 || p(0, 1, "在") != 0 {
+			t.Fatalf("%v：打出的注音涵蓋紀錄讀音與右鄰，應使用更正", typed)
+		}
+	}
+	for _, typed := range [][]zhuyin.Syllable{
+		{zhuyin.Abbreviate("ㄘ"), zhuyin.Abbreviate("ㄏ")}, // 開頭不同
+		{zhuyin.Abbreviate("ㄗ"), zhuyin.Abbreviate("ㄍ")}, // 右鄰開頭不同
+	} {
+		if p := m.CorrectionPenalty(typed, nil); p != nil && p(0, 1, "再") > 0 {
+			t.Fatalf("%v：不相容的不能套用", typed)
+		}
+	}
+}

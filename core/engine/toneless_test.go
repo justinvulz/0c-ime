@@ -29,3 +29,15 @@ func TestOpenSessionCarriesToneless(t *testing.T) {
 		t.Fatal("關掉不打聲調後混打照舊")
 	}
 }
+
+// 「注音打一半也能選字」：之後開的每個 session 都帶到設定；預設關閉。
+func TestOpenSessionCarriesPartialSyllables(t *testing.T) {
+	e := testEngine()
+	if e.Session(e.OpenSession()).PartialSyllables {
+		t.Fatal("預設關閉")
+	}
+	e.PartialSyllables = true
+	if !e.Session(e.OpenSession()).PartialSyllables {
+		t.Fatal("session 沒有帶到注音打一半的設定")
+	}
+}

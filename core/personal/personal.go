@@ -364,6 +364,35 @@ func (v view) HasPrefix(syls []zhuyin.Syllable) bool {
 	return len(v.phrases(func(rk string) bool { return hasSylPrefix(rk, k) })) > 0
 }
 
+// Continuations 是 lexicon.Continuer（注音打一半的剪枝）：系統詞庫、自訂詞與個人片語接得下去的音節的聯集，
+// 結果與逐一 HasPrefix 相同（可能重複）。
+func (v view) Continuations(syls []zhuyin.Syllable, base zhuyin.Syllable, fn func(zhuyin.Syllable)) {
+	lexicon.Continue(v.sys(), syls, base, fn)
+	if v.m.vocabLen() > 0 {
+		v.m.Vocab.Continuations(syls, base, fn)
+	}
+	if len(v.m.Store.PhraseOrder) == 0 {
+		return
+	}
+	k := zhuyin.Key(syls)
+	for _, ph := range v.m.Store.PhraseOrder {
+		rk, ok := v.m.Store.Phrases[ph]
+		if !ok {
+			continue
+		}
+		rest := rk
+		if k != "" {
+			if !strings.HasPrefix(rk, k+" ") {
+				continue
+			}
+			rest = rk[len(k)+1:]
+		}
+		if next, _, _ := strings.Cut(rest, " "); next != "" && strings.HasPrefix(next, string(base)) {
+			fn(zhuyin.Syllable(next))
+		}
+	}
+}
+
 // LongestWord 回報詞條讀音的最長音節數（decode.Long）：系統詞庫的長詞（#142）與自訂詞（#122）
 // 都可以超過一般詞的解碼上限。
 func (v view) LongestWord() int {

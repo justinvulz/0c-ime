@@ -3,6 +3,7 @@ package decode
 
 import (
 	"math"
+	"slices"
 	"sort"
 	"unicode/utf8"
 
@@ -159,27 +160,58 @@ func MaxLen(lex lexicon.Source) int {
 	return max(MaxWordLen, lexicon.Longest(lex))
 }
 
-// spans 列舉從 start 起、與音節格相容的所有讀音（以詞庫前綴剪枝）。
-func (d *Decoder) spans(lat input.Lattice, start int, fn func(reading []zhuyin.Syllable, cost float64)) {
+// spans 列舉從 start 起、與音節格相容的所有讀音（以詞庫前綴剪枝）。cost 是走過的假設的輸入成本（近音等，
+// MaxCost 只看它），pen 是只計分的罰分（input.Hyp.Penalty，注音打一半的補完）；計分用 cost+pen。
+func (d *Decoder) spans(lat input.Lattice, start int, fn func(reading []zhuyin.Syllable, cost, pen float64)) {
 	limit := MaxLen(d.Lex)
-	var walk func(pos int, reading []zhuyin.Syllable, cost float64)
-	walk = func(pos int, reading []zhuyin.Syllable, cost float64) {
+	var walk func(pos int, reading []zhuyin.Syllable, cost, pen float64)
+	walk = func(pos int, reading []zhuyin.Syllable, cost, pen float64) {
 		if pos == len(lat) || pos-start == limit {
 			return
 		}
-		for _, h := range lat[pos] {
-			if d.MaxCost > 0 && cost+h.Cost > d.MaxCost {
-				continue
-			}
-			r := append(reading[:len(reading):len(reading)], h.Syl)
-			if !d.Lex.HasPrefix(r) {
-				continue
-			}
-			fn(r, cost+h.Cost)
-			walk(pos+1, r, cost+h.Cost)
+		eachNext(d.Lex, lat[pos], reading, func(h input.Hyp) bool {
+			return d.MaxCost <= 0 || cost+h.Cost <= d.MaxCost
+		}, func(h input.Hyp, r []zhuyin.Syllable) {
+			fn(r, cost+h.Cost, pen+h.Penalty)
+			walk(pos+1, r, cost+h.Cost, pen+h.Penalty)
+		})
+	}
+	walk(start, nil, 0, 0)
+}
+
+// eachNext 依 row 的順序，對 keep 為真、而且 reading 加上它還是某個詞條讀音開頭的假設呼叫 fn（r 是加上它的讀音）。
+// 注音打一半展開的假設（input.Hyp.Prefix，一列上百個，排在列首、依 Syl 排序）向詞庫一次問出接得下去的音節
+// （lexicon.Continue），不逐一 HasPrefix；結果與逐一 HasPrefix 相同。
+func eachNext(lex lexicon.Source, row []input.Hyp, reading []zhuyin.Syllable, keep func(input.Hyp) bool, fn func(h input.Hyp, r []zhuyin.Syllable)) {
+	block := 0
+	for block < len(row) && row[block].Prefix != "" && row[block].Prefix == row[0].Prefix {
+		block++
+	}
+	var next []zhuyin.Syllable
+	if block > 1 {
+		lexicon.Continue(lex, reading, row[0].Prefix, func(y zhuyin.Syllable) { next = append(next, y) })
+		if !slices.IsSorted(next) {
+			slices.Sort(next)
 		}
 	}
-	walk(start, nil, 0)
+	j := 0
+	for k, h := range row {
+		if !keep(h) {
+			continue
+		}
+		r := append(reading[:len(reading):len(reading)], h.Syl)
+		if k < block && block > 1 {
+			for j < len(next) && next[j] < h.Syl {
+				j++
+			}
+			if j == len(next) || next[j] != h.Syl {
+				continue
+			}
+		} else if !lex.HasPrefix(r) {
+			continue
+		}
+		fn(h, r)
+	}
 }
 
 type state struct {
@@ -213,8 +245,12 @@ func allowed(locks map[int]Lock, i, j int, w string) bool {
 type arc struct {
 	j    int
 	e    lexicon.Entry
-	cost float64
+	cost float64 // 輸入成本（近音），決定 Matched
+	pen  float64 // 只計分的罰分（input.Hyp.Penalty）
 }
+
+// score 是計分用的成本：輸入成本加罰分。
+func (a arc) score() float64 { return a.cost + a.pen }
 
 // Decode 回傳最佳路徑。prefix 為真時，組字尾端可以是「更長的詞的前綴」，
 // 其分數為所有相容且顯示字串相同的詞的機率總和，可與完整詞路徑直接比較。
@@ -307,7 +343,7 @@ func (d *Decoder) forward(lat input.Lattice, locks map[int]Lock) [][]state {
 		arcs := d.wordArcs(lat, i, locks)
 		for _, st := range d.frontier(best[i]) {
 			for _, a := range arcs {
-				sc := st.score + d.repeatScore(lat, locks, st.path, i, a.j, a.e.Surface, d.arcLog(i, a.j, st.last, a.e, a.cost))
+				sc := st.score + d.repeatScore(lat, locks, st.path, i, a.j, a.e.Surface, d.arcLog(i, a.j, st.last, a.e, a.score()))
 				seg := Seg{Word: a.e.Surface, Start: i, End: a.j, Correction: a.e.Correction, Matched: segMatched(lat, i, a.e, a.cost)}
 				put(a.j, state{a.e.Surface, sc, append(st.path[:len(st.path):len(st.path)], seg)})
 			}
@@ -363,8 +399,8 @@ type tail struct {
 }
 
 type tailEntry struct {
-	e    lexicon.Entry
-	cost float64
+	e         lexicon.Entry
+	cost, pen float64 // 見 arc
 }
 
 // tailEntries 回傳「讀音以 lat[i:] 開頭」的詞：系統詞取依先驗排序的前 M 個（快取），
@@ -372,7 +408,7 @@ type tailEntry struct {
 func (d *Decoder) tailEntries(lat input.Lattice, i int) []tailEntry {
 	k := len(lat) - i
 	var out []tailEntry
-	d.spans(lat, i, func(reading []zhuyin.Syllable, cost float64) {
+	d.spans(lat, i, func(reading []zhuyin.Syllable, cost, pen float64) {
 		if len(reading) != k {
 			return
 		}
@@ -381,10 +417,10 @@ func (d *Decoder) tailEntries(lat input.Lattice, i int) []tailEntry {
 			sys, adjust, personal = l.System(), l.Adjust, l.PersonalPrefixed(reading)
 		}
 		for _, e := range adjust(d.topPrefixed(sys, reading)) {
-			out = append(out, tailEntry{e, cost})
+			out = append(out, tailEntry{e, cost, pen})
 		}
 		for _, e := range personal {
-			out = append(out, tailEntry{e, cost})
+			out = append(out, tailEntry{e, cost, pen})
 		}
 	})
 	return out
@@ -447,7 +483,7 @@ func (d *Decoder) group(cands []tailEntry, k int, left string, cont float64) []*
 			continue
 		}
 		disp := string([]rune(c.e.Surface)[:k])
-		weight := c.e.PRW * math.Exp(-c.cost)
+		weight := c.e.PRW * math.Exp(-c.cost-c.pen)
 		if len(c.e.Reading) > k && cont > 0 {
 			weight *= cont
 		}
@@ -501,7 +537,7 @@ func (d *Decoder) CompleteHomophones(lat input.Lattice, start int, left string) 
 		if ev != nil {
 			prior, evidence = ev.SystemProb(left, c.e.Surface), ev.Evidence(left, c.e.Surface)
 		}
-		prior *= c.e.PRW * math.Exp(-c.cost)
+		prior *= c.e.PRW * math.Exp(-c.cost-c.pen)
 		if d.CorrectionUsage != nil {
 			evidence += d.CorrectionUsage(start, c.e.Surface)
 		}
@@ -576,7 +612,7 @@ func (d *Decoder) complete(lat input.Lattice, path []Seg) (Completion, float64, 
 			continue
 		}
 		m := member{e: c.e}
-		w := c.e.PRW * math.Exp(-c.cost)
+		w := c.e.PRW * math.Exp(-c.cost-c.pen)
 		if ev != nil {
 			m.prior = ev.SystemProb(left, c.e.Surface) * w
 			m.c = ev.Evidence(left, c.e.Surface)
@@ -701,12 +737,19 @@ func (d *Decoder) CandidatesInContextWindows(lat input.Lattice, start, length in
 	before := d.frontier(fw[start])
 	// 每個位置的詞圖只列舉一次。
 	arcs := make([][]arc, len(lat))
+	limit := MaxLen(d.Lex)
 	for at := end; at < len(lat); at++ {
-		d.spans(lat, at, func(reading []zhuyin.Syllable, cost float64) {
+		// 經過注音打一半的位置時一個位置有上千個弧，後綴動態規劃是弧數平方：跟整句解碼一樣每個終點只留前幾名
+		// （wordArcs，鎖定規則相同）。其他情況照舊列出全部，結果不變。
+		if partialSpan(lat, at, min(len(lat), at+limit)) {
+			arcs[at] = d.wordArcs(lat, at, kept)
+			continue
+		}
+		d.spans(lat, at, func(reading []zhuyin.Syllable, cost, pen float64) {
 			for _, e := range d.Lex.Exact(reading) {
 				j := at + len(reading)
 				if allowed(kept, at, j, e.Surface) {
-					arcs[at] = append(arcs[at], arc{j, e, cost})
+					arcs[at] = append(arcs[at], arc{j, e, cost, pen})
 				}
 			}
 		})
@@ -727,7 +770,7 @@ func (d *Decoder) CandidatesInContextWindows(lat input.Lattice, start, length in
 		}
 		best := math.Inf(-1)
 		for _, a := range arcs[at] {
-			score := d.arcLog(at, a.j, left, a.e, a.cost) + suffix(a.j, a.e.Surface)
+			score := d.arcLog(at, a.j, left, a.e, a.score()) + suffix(a.j, a.e.Surface)
 			best = math.Max(best, score)
 		}
 		cache[k] = best
@@ -789,7 +832,7 @@ func (d *Decoder) innerScores(lat input.Lattice, fw [][]state, start, end int, k
 			continue
 		}
 		states := d.frontier(fw[s])
-		d.spans(lat, s, func(reading []zhuyin.Syllable, cost float64) {
+		d.spans(lat, s, func(reading []zhuyin.Syllable, cost, pen float64) {
 			j := s + len(reading)
 			if j < end || s == start && j == end {
 				return
@@ -801,7 +844,7 @@ func (d *Decoder) innerScores(lat input.Lattice, fw [][]state, start, end int, k
 				}
 				best := math.Inf(-1)
 				for _, st := range states {
-					best = math.Max(best, st.score+d.arcLog(s, j, st.last, e, cost))
+					best = math.Max(best, st.score+d.arcLog(s, j, st.last, e, cost+pen))
 				}
 				score := best + suffix(j, e.Surface)
 				if math.IsInf(score, -1) {
@@ -836,7 +879,7 @@ func (d *Decoder) candidates(lat input.Lattice, start, length int, score func(le
 		}
 	}
 	var pool []tailEntry
-	d.spans(lat[:start+length], start, func(reading []zhuyin.Syllable, cost float64) {
+	d.spans(lat[:start+length], start, func(reading []zhuyin.Syllable, cost, pen float64) {
 		if len(reading) != length || d.OnlyCosted && cost <= 0 {
 			return
 		}
@@ -845,14 +888,14 @@ func (d *Decoder) candidates(lat input.Lattice, start, length int, score func(le
 				continue
 			}
 			if d.MaxCandidates > 0 {
-				pool = append(pool, tailEntry{e, cost})
+				pool = append(pool, tailEntry{e, cost, pen})
 				continue
 			}
-			consider(e, cost)
+			consider(e, cost+pen)
 		}
 	})
 	for _, p := range d.topPool(pool, d.MaxCandidates) {
-		consider(p.e, p.cost)
+		consider(p.e, p.cost+p.pen)
 	}
 	sort.SliceStable(out, func(a, b int) bool {
 		ea, eb := out[a].Entry, out[b].Entry
@@ -897,7 +940,7 @@ func (d *Decoder) topPool(pool []tailEntry, n int) []tailEntry {
 	}
 	rank := make([]float64, len(pool))
 	for i, p := range pool {
-		rank[i] = prior(p.e.Surface) * p.e.PRW * math.Exp(-p.cost)
+		rank[i] = prior(p.e.Surface) * p.e.PRW * math.Exp(-p.cost-p.pen)
 	}
 	idx := make([]int, len(pool))
 	for i := range idx {

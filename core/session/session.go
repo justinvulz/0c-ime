@@ -101,6 +101,9 @@ type Session struct {
 	// Toneless 由宿主依「不打聲調也能選字」設定（#150，預設關）：聲調選填，沒打聲調的音節由解碼決定（untoned.go）。
 	// 開啟時停用中英混打的自動判斷。零值時行為與沒有此功能時相同。
 	Toneless bool
+	// PartialSyllables 由宿主依「注音打一半也能選字」設定（預設關）：聲調選填生效時，每個字可以只打開頭的注音
+	// （ㄓㄍ 是中國），未完成的注音只要是某個音節的開頭就能切音節（untoned.go）。零值時行為與沒有此功能時相同。
+	PartialSyllables bool
 	// MixedInput is opt-in; English is a shared, immutable vocabulary.
 	EnglishAutocomplete   bool
 	MixedInput            bool
@@ -1205,6 +1208,9 @@ func (s *Session) openAt(pos, length int) bool {
 	// 與視窗相交的跨音鎖定即將被這次選取取代：不補它們的讀音，原音候選只依打出的音查詢。
 	lat := s.lockLattice(s.expand(s.syls), pos, pos+length)
 	windows := []decode.Window{{Lat: lat[begin:end], Pinned: pinned}}
+	if s.abbreviatedIn(pos, pos+length) {
+		windows[0].MaxCandidates = maxPartialCandidates
+	}
 	if near, ok := s.nearWindow(lat, pos, length); ok {
 		near.Lat = near.Lat[begin:end]
 		windows = append(windows, near) // 近音版本與原音版本共用同一份前後文計算

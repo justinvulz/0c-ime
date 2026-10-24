@@ -400,16 +400,12 @@ func (m *Model) indexCorrections() {
 }
 
 // untonedCorrections 對含沒打聲調音節（#150）的 syls 列出相容的更正紀錄：紀錄的讀音與左右鄰，
-// 打了聲調的位置要完全相同，沒打聲調的位置只比基底。fn 收到紀錄起點、鍵與紀錄；同一筆紀錄可能在不同起點各出現一次。
+// 打了聲調的位置要完全相同，沒打聲調的位置只比基底，
+// 注音打一半的位置比開頭（zhuyin.Syllable.Covers）。fn 收到紀錄起點、鍵與紀錄；同一筆紀錄可能在不同起點各出現一次。
 func (m *Model) untonedCorrections(syls []zhuyin.Syllable, fn func(i int, key string, c Correction)) {
 	m.indexCorrections()
 	usable := func(y zhuyin.Syllable) bool { return y.Legal() || y.Untoned() }
-	compatible := func(typed, y zhuyin.Syllable) bool {
-		if typed.Untoned() {
-			return typed.Base() == y.Base()
-		}
-		return typed == y
-	}
+	compatible := func(typed, y zhuyin.Syllable) bool { return typed.Covers(y) }
 	neighbor := func(at int, stored zhuyin.Syllable) bool {
 		if at < 0 || at >= len(syls) || !usable(syls[at]) {
 			return stored == ""
@@ -420,21 +416,27 @@ func (m *Model) untonedCorrections(syls []zhuyin.Syllable, fn func(i int, key st
 		if !usable(syls[i]) {
 			continue
 		}
-		for _, record := range m.correctionIndex.byBase[string(syls[i].Base())] {
-			c, reading := record.c, record.reading
-			j := i + len(reading)
-			if j > len(syls) || len(reading) > maxCorrectionLength || len([]rune(c.Word)) != len(reading) {
-				continue
-			}
-			match := true
-			for k, y := range reading {
-				if !usable(syls[i+k]) || !compatible(syls[i+k], y) {
-					match = false
-					break
+		bases := []zhuyin.Syllable{syls[i].Base()}
+		if syls[i].Abbreviated() {
+			bases = zhuyin.CompletionBases(syls[i].Base())
+		}
+		for _, b := range bases {
+			for _, record := range m.correctionIndex.byBase[string(b)] {
+				c, reading := record.c, record.reading
+				j := i + len(reading)
+				if j > len(syls) || len(reading) > maxCorrectionLength || len([]rune(c.Word)) != len(reading) {
+					continue
 				}
-			}
-			if match && neighbor(i-1, c.Left) && neighbor(j, c.Right) {
-				fn(i, correctionKey(c.Reading, c.Left, c.Right), c)
+				match := true
+				for k, y := range reading {
+					if !usable(syls[i+k]) || !compatible(syls[i+k], y) {
+						match = false
+						break
+					}
+				}
+				if match && neighbor(i-1, c.Left) && neighbor(j, c.Right) {
+					fn(i, correctionKey(c.Reading, c.Left, c.Right), c)
+				}
 			}
 		}
 	}

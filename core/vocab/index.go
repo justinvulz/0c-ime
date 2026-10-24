@@ -166,3 +166,16 @@ func (s *Set) HasEnglishPrefix(raw string) bool {
 
 // EnglishLen 回報有效的英文詞數。
 func (s *Set) EnglishLen() int { return len(s.english) }
+
+// Continuations 對 syls 之後、字串以 base 開頭、還有自訂詞經過的每個音節呼叫 fn（lexicon.Continuer，順序不拘）。
+func (s *Set) Continuations(syls []zhuyin.Syllable, base zhuyin.Syllable, fn func(zhuyin.Syllable)) {
+	n := s.find(syls)
+	if n == nil {
+		return
+	}
+	for y, c := range n.children {
+		if c.size > 0 && strings.HasPrefix(string(y), string(base)) {
+			fn(y)
+		}
+	}
+}

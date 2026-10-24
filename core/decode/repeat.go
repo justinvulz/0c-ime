@@ -1,6 +1,7 @@
 package decode
 
 import (
+	"cmp"
 	"math"
 	"slices"
 	"strings"
@@ -150,18 +151,18 @@ func (d *Decoder) repeatWords(lat input.Lattice, locks map[int]Lock, at, start, 
 		e := c.e
 		switch {
 		case c.n == 1 && at < start && e.Surface == single:
-			r.unit = max(r.unit, prior(e.Surface)*e.PRW*math.Exp(-c.cost))
+			r.unit = max(r.unit, prior(e.Surface)*e.PRW*math.Exp(-c.cost-c.pen))
 		case c.n != end-at:
 		case e.Surface == pair:
 			r.isWord = true
 		case !e.Correction && allowed(locks, at, end, e.Surface):
-			lp := math.Log(prior(e.Surface)*e.PRW) - c.cost
+			lp := math.Log(prior(e.Surface)*e.PRW) - c.cost - c.pen
 			word = max(word, lp)
 			words, logs = append(words, e.Surface), append(logs, lp)
 			if at < start {
 				r.word2 = word
 			} else {
-				r.arcs = append(r.arcs, arc{end, e, c.cost})
+				r.arcs = append(r.arcs, arc{end, e, c.cost, c.pen})
 			}
 		}
 	}
@@ -249,7 +250,7 @@ func (d *Decoder) spanContest(lat input.Lattice, locks map[int]Lock, at int, wor
 		for _, c := range d.repeatSpan(lat, pos, at+2) {
 			if c.n == 1 && !c.e.Correction && allowed(locks, pos, pos+1, c.e.Surface) {
 				out = append(out, c)
-				ps = append(ps, math.Log(prior(c.e.Surface)*c.e.PRW)-c.cost)
+				ps = append(ps, math.Log(prior(c.e.Surface)*c.e.PRW)-c.cost-c.pen)
 			}
 		}
 		return out, ps
@@ -259,7 +260,7 @@ func (d *Decoder) spanContest(lat input.Lattice, locks map[int]Lock, at int, wor
 	c.seconds, c.p2 = singles(at + 1)
 	path := func(i, j int) float64 {
 		a, b := c.firsts[i].e, c.seconds[j]
-		return c.p1[i] + math.Log(d.systemProb(a.Surface, b.e.Surface)*b.e.PRW) - b.cost
+		return c.p1[i] + math.Log(d.systemProb(a.Surface, b.e.Surface)*b.e.PRW) - b.cost - b.pen
 	}
 	isWord := func(a, b string) bool {
 		for _, w := range words {
@@ -324,13 +325,17 @@ func (d *Decoder) repeatSpan(lat input.Lattice, at, end int) []spanEntry {
 		return es
 	}
 	var es []spanEntry
-	d.spans(lat[:end], at, func(reading []zhuyin.Syllable, cost float64) {
+	d.spans(lat[:end], at, func(reading []zhuyin.Syllable, cost, pen float64) {
 		if n := len(reading); n == 1 || n == end-at {
 			for _, e := range d.Lex.Exact(reading) {
-				es = append(es, spanEntry{n, e, cost})
+				es = append(es, spanEntry{n, e, cost, pen})
 			}
 		}
 	})
+	// 經過注音打一半的位置時，每個位置有上千個單字、比對是兩兩相乘：跟整句解碼的弧一樣只留前幾名（topUntonedArcs）。
+	if partialSpan(lat, at, end) {
+		es = d.topSpanEntries(es)
+	}
 	if d.repeatSpans == nil {
 		d.repeatSpans = map[[2]int][]spanEntry{}
 	}
@@ -339,9 +344,9 @@ func (d *Decoder) repeatSpan(lat input.Lattice, at, end int) []spanEntry {
 }
 
 type spanEntry struct {
-	n    int // 讀音音節數
-	e    lexicon.Entry
-	cost float64
+	n         int // 讀音音節數
+	e         lexicon.Entry
+	cost, pen float64 // 見 arc
 }
 
 // repeatWordFrom 是 XX 成段時，從前詞 left 走同讀音詞庫詞的最佳對數分數。
@@ -351,7 +356,7 @@ func (d *Decoder) repeatWordFrom(r *repeatWords, at, end int, left string) float
 	}
 	word2 := math.Inf(-1)
 	for _, a := range r.arcs {
-		word2 = max(word2, d.arcLog(at, end, left, a.e, a.cost))
+		word2 = max(word2, d.arcLog(at, end, left, a.e, a.score()))
 	}
 	if r.from == nil {
 		r.from = map[string]float64{}
@@ -364,4 +369,37 @@ func (d *Decoder) repeatWordFrom(r *repeatWords, at, end int, left string) float
 func (d *Decoder) repeatScore(lat input.Lattice, locks map[int]Lock, segs []Seg, start, end int, word string, score float64) float64 {
 	score, _ = d.capRepeat(lat, locks, segs, start, end, word, score)
 	return score
+}
+
+// topSpanEntries 依讀音長度分組，各留無上下文機率乘讀音權重、再乘補完罰分最高的 maxUntonedArcs 筆，
+// 組內保持原本的列舉順序。
+func (d *Decoder) topSpanEntries(es []spanEntry) []spanEntry {
+	byLen := map[int][]int{}
+	for i, e := range es {
+		byLen[e.n] = append(byLen[e.n], i)
+	}
+	keep := make([]bool, len(es))
+	var score []float64
+	for _, idx := range byLen {
+		if len(idx) > maxUntonedArcs {
+			if score == nil {
+				score = make([]float64, len(es))
+				for i, e := range es {
+					score[i] = d.Score.Prob(lm.BOS, e.e.Surface) * e.e.PRW * math.Exp(-e.cost-e.pen)
+				}
+			}
+			slices.SortStableFunc(idx, func(a, b int) int { return cmp.Compare(score[b], score[a]) })
+			idx = idx[:maxUntonedArcs]
+		}
+		for _, i := range idx {
+			keep[i] = true
+		}
+	}
+	out := es[:0:0]
+	for i, e := range es {
+		if keep[i] {
+			out = append(out, e)
+		}
+	}
+	return out
 }

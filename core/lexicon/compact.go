@@ -3,6 +3,7 @@ package lexicon
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -20,6 +21,8 @@ type Compact struct {
 	ent    []centry // 依讀音排序
 	strs   string   // 所有詞面串接
 	byText []uint32 // 詞條索引，依詞面排序，供 Has
+	// sortedSyls 回報 syls 是否依字串排序（Build 一定是；Decode 讀回的資料包照理也是）。Continuations 依它判斷能否用 ID 區間。
+	sortedSyls bool
 	// longest 是最長的詞條讀音音節數。由詞條算出、不寫進資料檔，所以舊資料包也有值、格式不變（#142）。
 	longest int
 }
@@ -128,6 +131,7 @@ func (c *Compact) measure() {
 func (c *Compact) LongestWord() int { return c.longest }
 
 func (c *Compact) index() {
+	c.sortedSyls = slices.IsSorted(c.syls)
 	c.ids = make(map[zhuyin.Syllable]uint16, len(c.syls))
 	for i, s := range c.syls {
 		c.ids[s] = uint16(i)

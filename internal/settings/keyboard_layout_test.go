@@ -80,15 +80,16 @@ func TestETenDisablesMixedAndEmojiItems(t *testing.T) {
 		}
 		return out
 	}
-	if d := disabled(s); len(d) != 0 {
-		t.Fatalf("標準排列沒有停用的項目：%v", d)
+	// 注音打一半要先開聲調選填（預設關），標準排列只有它停用。
+	if d := disabled(s); len(d) != 1 || d["partial-syllables"] != partialNeedsTonelessReason {
+		t.Fatalf("標準排列只停用要先開聲調選填的注音打一半：%v", d)
 	}
 	if err := s.Set("keyboard-layout", "eten"); err != nil {
 		t.Fatal(err)
 	}
 	d := disabled(s)
-	// 不打聲調（#150）只在標準排列有效，倚天時也停用。
-	if len(d) != 4 || d["mixed-input"] != "倚天 41 鍵時關閉" || d["emoji-shortcut"] != "倚天 41 鍵時關閉" || d["emoji-equals-first"] == "" || d["toneless"] != "倚天 41 鍵時關閉" {
+	// 不打聲調（#150）與注音打一半只在標準排列有效，倚天時也停用。
+	if len(d) != 5 || d["mixed-input"] != "倚天 41 鍵時關閉" || d["emoji-shortcut"] != "倚天 41 鍵時關閉" || d["emoji-equals-first"] == "" || d["toneless"] != "倚天 41 鍵時關閉" || d["partial-syllables"] != "倚天 41 鍵時關閉" {
 		t.Fatalf("倚天停用混打與 Emoji：%v", d)
 	}
 	for _, it := range s.Items() {
@@ -99,7 +100,7 @@ func TestETenDisablesMixedAndEmojiItems(t *testing.T) {
 	if err := s.Set("keyboard-layout", "standard"); err != nil {
 		t.Fatal(err)
 	}
-	if d := disabled(s); len(d) != 0 || !s.MixedInput || s.EmojiShortcut != "equals" {
+	if d := disabled(s); len(d) != 1 || !s.MixedInput || s.EmojiShortcut != "equals" {
 		t.Fatalf("切回標準排列恢復原本的值：%v %+v", d, s)
 	}
 }
@@ -124,8 +125,8 @@ func TestHsuDisablesOnlyMixedInput(t *testing.T) {
 			t.Fatalf("排列的顯示名稱：%+v", it.ValueLabels)
 		}
 	}
-	// 不打聲調（#150）只在標準排列有效，許氏時也停用。
-	if strings.Join(disabled, "、") != "mixed-input：許氏排列時關閉、toneless：許氏排列時關閉" {
+	// 不打聲調（#150）與注音打一半只在標準排列有效，許氏時也停用。
+	if strings.Join(disabled, "、") != "mixed-input：許氏排列時關閉、toneless：許氏排列時關閉、partial-syllables：許氏排列時關閉" {
 		t.Fatalf("許氏只停用混打：%v", disabled)
 	}
 }

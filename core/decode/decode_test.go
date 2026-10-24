@@ -101,7 +101,7 @@ func TestMaxCostBoundsSwapsPerWord(t *testing.T) {
 	}
 	count := func(max float64) (n int) {
 		d.MaxCost = max
-		d.spans(lat, 0, func(r []zhuyin.Syllable, cost float64) {
+		d.spans(lat, 0, func(r []zhuyin.Syllable, cost, _ float64) {
 			if cost > 0 {
 				n++
 			}

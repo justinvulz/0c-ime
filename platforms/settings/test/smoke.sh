@@ -466,7 +466,7 @@ run_update eten settings -json > "$OUT/eten-settings.json"
 check "倚天時契約標示混打、Emoji 與不打聲調停用並附原因，值保留" python3 - "$OUT/eten-settings.json" <<'PY_ETEN'
 import json,sys
 items={x['key']:x for x in json.load(open(sys.argv[1]))['items']}
-ok=all(items[k].get('disabled') and items[k].get('disabled_reason')=='倚天 41 鍵時關閉' for k in ('mixed-input','emoji-shortcut','emoji-equals-first','toneless'))
+ok=all(items[k].get('disabled') and items[k].get('disabled_reason')=='倚天 41 鍵時關閉' for k in ('mixed-input','emoji-shortcut','emoji-equals-first','toneless','partial-syllables'))
 ok=ok and items['mixed-input']['value']=='on' and items['keyboard-layout']['value']=='eten' and not items['space-selects'].get('disabled')
 sys.exit(0 if ok else 1)
 PY_ETEN
@@ -540,8 +540,9 @@ check "許氏時契約只標示混打與不打聲調停用並附原因，值保�
 import json,sys
 items={x['key']:x for x in json.load(open(sys.argv[1]))['items']}
 disabled=[k for k,x in items.items() if x.get('disabled') and k!='start-mode']
-ok=disabled==['mixed-input','toneless'] and items['mixed-input'].get('disabled_reason')=='許氏排列時關閉' and items['mixed-input']['value']=='on'
+ok=disabled==['mixed-input','toneless','partial-syllables'] and items['mixed-input'].get('disabled_reason')=='許氏排列時關閉' and items['mixed-input']['value']=='on'
 ok=ok and items['toneless'].get('disabled_reason')=='許氏排列時關閉'  # 不打聲調只在標準排列有效（#150）
+ok=ok and items['partial-syllables'].get('disabled_reason')=='許氏排列時關閉'  # 注音打一半同樣只在標準排列
 ok=ok and items['keyboard-layout']['value']=='hsu' and items['keyboard-layout']['values']==['standard','eten','hsu']
 ok=ok and items['keyboard-layout'].get('value_labels',{}).get('hsu')=='許氏'
 sys.exit(0 if ok else 1)
@@ -567,7 +568,10 @@ check "不打聲調時契約標示混打停用，值保留 on" python3 - "$OUT/t
 import json,sys
 items={x['key']:x for x in json.load(open(sys.argv[1]))['items']}
 it=items['mixed-input']
-sys.exit(0 if it.get('disabled') and it.get('disabled_reason')=='不打聲調時關閉' and it['value']=='on' and items['toneless']['value']=='on' else 1)
+it2=items['partial-syllables']  # 開了聲調選填：注音打一半可以設定
+ok=it.get('disabled') and it.get('disabled_reason')=='不打聲調時關閉' and it['value']=='on' and items['toneless']['value']=='on'
+ok=ok and not it2.get('disabled') and it2['value']=='off'
+sys.exit(0 if ok else 1)
 PY_TONELESS
 # 中英切換頁：混打反灰、寫「不打聲調時關閉」，附到「選字」改「不打聲調也能選字」的連結。
 shoot toneless mode

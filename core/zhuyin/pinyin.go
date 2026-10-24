@@ -71,10 +71,10 @@ func (s Syllable) Legal() bool {
 	return legalBases[string(s.Base())]
 }
 
-// Base 回傳去掉聲調符號的音節；沒打聲調的音節（#150）去掉 UntonedMark。
+// Base 回傳去掉聲調符號的音節；沒打聲調的音節（#150）去掉 UntonedMark 或 PartialMark。
 func (s Syllable) Base() Syllable {
 	if s.Untoned() {
-		return Syllable(string(s[:len(s)-len(string(UntonedMark))]))
+		return s[:len(s)-1] // 兩個記號都是一個位元組
 	}
 	r := []rune(string(s))
 	if n := len(r); n > 0 && ClassOf(r[n-1]) == Tone {
@@ -85,7 +85,7 @@ func (s Syllable) Base() Syllable {
 
 // ToneOf 回傳聲調：1–4，輕聲為 5；沒打聲調的音節（#150）為 0。
 func (s Syllable) ToneOf() int {
-	if strings.HasSuffix(string(s), string(UntonedMark)) && s.Untoned() {
+	if s.Untoned() {
 		return 0
 	}
 	r := []rune(string(s))

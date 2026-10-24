@@ -142,7 +142,7 @@ func (k repeatArc) mayCap(segs []Seg, at int, w string) bool {
 func (d *Decoder) wordArcs(lat input.Lattice, at int, locks map[int]Lock) []arc {
 	var arcs []arc
 	var pooled map[int][]arc // 經過沒打聲調位置的弧（#150），依終點分組，最後各留前 maxUntonedArcs 個
-	d.spans(lat, at, func(reading []zhuyin.Syllable, cost float64) {
+	d.spans(lat, at, func(reading []zhuyin.Syllable, cost, pen float64) {
 		end := at + len(reading)
 		pool := untonedSpan(lat, at, end) && !lockTouches(locks, at, end)
 		for _, e := range d.Lex.Exact(reading) {
@@ -151,9 +151,9 @@ func (d *Decoder) wordArcs(lat input.Lattice, at int, locks map[int]Lock) []arc 
 					if pooled == nil {
 						pooled = map[int][]arc{}
 					}
-					pooled[end] = append(pooled[end], arc{end, e, cost})
+					pooled[end] = append(pooled[end], arc{end, e, cost, pen})
 				} else {
-					arcs = append(arcs, arc{end, e, cost})
+					arcs = append(arcs, arc{end, e, cost, pen})
 				}
 			}
 		}
@@ -216,7 +216,7 @@ func (d *Decoder) NBest(lat input.Lattice, locks map[int]Lock, prefix bool, k in
 		for _, idx := range append(contextual, plain...) {
 			st := states[at][idx]
 			for _, a := range arcs {
-				score := d.arcLog(at, a.j, st.last, a.e, a.cost)
+				score := d.arcLog(at, a.j, st.last, a.e, a.score())
 				seg := Seg{Word: a.e.Surface, Start: at, End: a.j, Correction: a.e.Correction, Matched: segMatched(lat, at, a.e, a.cost)}
 				repeat := repeatKind(a.e.Surface)
 				for _, h := range st.rows {
@@ -338,14 +338,14 @@ func (d *Decoder) AuditTarget(lat input.Lattice, locks map[int]Lock, prefix bool
 			}
 			for _, left := range lefts {
 				h := states[at][left]
-				put(a.j, a.e.Surface, extend(h, Seg{Word: a.e.Surface, Start: at, End: a.j, Correction: a.e.Correction, Matched: segMatched(lat, at, a.e, a.cost)}, d.repeatScore(lat, locks, h.Segments, at, a.j, a.e.Surface, d.arcLog(at, a.j, left, a.e, a.cost))))
+				put(a.j, a.e.Surface, extend(h, Seg{Word: a.e.Surface, Start: at, End: a.j, Correction: a.e.Correction, Matched: segMatched(lat, at, a.e, a.cost)}, d.repeatScore(lat, locks, h.Segments, at, a.j, a.e.Surface, d.arcLog(at, a.j, left, a.e, a.score()))))
 			}
 		}
 		if !prefix || lockedIn(locks, at, n) {
 			continue
 		}
 		if reachable[at] {
-			d.spans(lat, at, func(reading []zhuyin.Syllable, cost float64) {
+			d.spans(lat, at, func(reading []zhuyin.Syllable, cost, _ float64) {
 				if len(reading) != n-at || math.IsInf(cost, 0) {
 					return
 				}

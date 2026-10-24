@@ -42,6 +42,7 @@ func main() {
 	fuzzyPairs := flag.String("fuzzy", "", "啟用的模糊音配對，逗號分隔：z-zh、c-ch、s-sh、en-eng；預設是「僅供選字」，寫成 z-zh=auto 則另啟用自動修正；空白為全部關閉。錄製的請求要用相同的設定重播")
 	mixedInput := flag.Bool("mixed-input", false, "中英混打試用；重播需使用相同開關，預設關閉")
 	toneless := flag.Bool("toneless", false, "不打聲調也能選字（#150）：沒打聲調的音節由解碼決定，開啟時停用混打。重播需使用相同開關")
+	partialSyllables := flag.Bool("partial-syllables", false, "注音打一半也能選字：每個字可以只打開頭的注音（ㄓㄍ 是中國），要搭配 -toneless。重播需使用相同開關")
 	candidateLayout := flag.String("candidate-layout", "vertical", "選字排列：vertical 或 grid")
 	emojiShortcut := flag.String("emoji-shortcut", "equals", "表情選單：off 或 equals；= 開選單，== 輸入等號，Tab 切顏文字")
 	emojiEqualsFirst := flag.Bool("emoji-equals-first", true, "將 = 放在 Emoji 第一項；關閉仍可按 == 輸入等號")
@@ -59,6 +60,7 @@ func main() {
 	check(err)
 	eng.MixedInput = *mixedInput
 	eng.Toneless = *toneless
+	eng.PartialSyllables = *partialSyllables
 	if *candidateLayout != "vertical" && *candidateLayout != "grid" {
 		check(fmt.Errorf("未知選字排列 %q", *candidateLayout))
 	}
@@ -134,6 +136,9 @@ func main() {
 		}
 		if *toneless {
 			fmt.Fprintln(rec, "# 重播需要相同的聲調選填設定：0c-cli -toneless")
+		}
+		if *partialSyllables {
+			fmt.Fprintln(rec, "# 重播需要相同的注音打一半設定：0c-cli -partial-syllables")
 		}
 		if *advanceAfterSelect {
 			fmt.Fprintln(rec, "# 重播需要相同的選字後游標設定：0c-cli -advance-after-select")

@@ -1,6 +1,7 @@
 package decode
 
 import (
+	"math"
 	"sort"
 
 	"github.com/0c-biggo/0c-ime/core/input"
@@ -43,7 +44,8 @@ func lockTouches(locks map[int]Lock, start, end int) bool {
 	return false
 }
 
-// topUntonedArcs 依終點由小到大，各留無上下文機率（含個人化，學過的字不會被裁掉）乘讀音權重最高的 maxUntonedArcs 個弧。
+// topUntonedArcs 依終點由小到大，各留無上下文機率（含個人化，學過的字不會被裁掉）乘讀音權重、再乘注音打一半的
+// 補完罰分（打出的音節優先留下）最高的 maxUntonedArcs 個弧。
 func (d *Decoder) topUntonedArcs(pooled map[int][]arc) []arc {
 	if len(pooled) == 0 {
 		return nil
@@ -63,7 +65,7 @@ func (d *Decoder) topUntonedArcs(pooled map[int][]arc) []arc {
 		score := make([]float64, len(arcs))
 		idx := make([]int, len(arcs))
 		for k := range arcs {
-			score[k] = d.Score.Prob(lm.BOS, arcs[k].e.Surface) * arcs[k].e.PRW
+			score[k] = d.Score.Prob(lm.BOS, arcs[k].e.Surface) * arcs[k].e.PRW * math.Exp(-arcs[k].pen)
 			idx[k] = k
 		}
 		sort.SliceStable(idx, func(a, b int) bool { return score[idx[a]] > score[idx[b]] })
@@ -75,7 +77,8 @@ func (d *Decoder) topUntonedArcs(pooled map[int][]arc) []arc {
 }
 
 // Reading 回傳詞 word 佔音節格 [start, end) 時在詞庫裡的讀音：只看成本 0 的假設（使用者打的音；
-// 沒打聲調的音節展開成的五個聲調也是成本 0），以詞庫前綴剪枝逐一組合，取讀音相容權重最高的詞條。
+// 沒打聲調的音節展開成的五個聲調、打一半的音節展開成的音節也是成本 0），以詞庫前綴剪枝逐一組合，
+// 取讀音相容權重乘補完罰分（input.Hyp.Penalty）最高的詞條。
 // 找不到時回傳 false。給「聲調選填」（#150）在提交、加詞時把沒打聲調的音節換回詞庫讀音用：
 // 學習與自訂詞只收真的讀音，不收內部記號。
 func Reading(lex lexicon.Source, lat input.Lattice, start, end int, word string) ([]zhuyin.Syllable, bool) {
@@ -93,27 +96,32 @@ func reading(lex lexicon.Source, lat input.Lattice, start, end int, word string,
 		return nil, false
 	}
 	var best []zhuyin.Syllable
-	bestPRW := -1.0
-	var walk func(pos int, reading []zhuyin.Syllable)
-	walk = func(pos int, reading []zhuyin.Syllable) {
+	bestW := -1.0
+	var walk func(pos int, reading []zhuyin.Syllable, pen float64)
+	walk = func(pos int, reading []zhuyin.Syllable, pen float64) {
 		if pos == end {
 			for _, e := range lex.Exact(reading) {
-				if e.Surface == word && e.Correction == correction && e.PRW > bestPRW {
-					best, bestPRW = append([]zhuyin.Syllable(nil), reading...), e.PRW
+				// 跟解碼計分一樣乘上補完罰分：打一半時，解碼走的是罰分後權重最高的讀音（ㄓㄨ 的「著」是 ㄓㄨˋ，不是 ㄓㄨㄛˊ）。
+				if w := e.PRW * math.Exp(-pen); e.Surface == word && e.Correction == correction && w > bestW {
+					best, bestW = append([]zhuyin.Syllable(nil), reading...), w
 				}
 			}
 			return
 		}
-		for _, h := range lat[pos] {
-			if h.Cost > 0 {
-				continue
-			}
-			r := append(reading[:len(reading):len(reading)], h.Syl)
-			if lex.HasPrefix(r) {
-				walk(pos+1, r)
-			}
+		eachNext(lex, lat[pos], reading, func(h input.Hyp) bool { return h.Cost <= 0 }, func(h input.Hyp, r []zhuyin.Syllable) {
+			walk(pos+1, r, pen+h.Penalty)
+		})
+	}
+	walk(start, nil, 0)
+	return best, best != nil
+}
+
+// partialSpan 回報 lat[start:end) 是否有注音打一半展開的位置（input.Hyp.Prefix，排在列首）。
+func partialSpan(lat input.Lattice, start, end int) bool {
+	for i := start; i < end; i++ {
+		if len(lat[i]) > 0 && lat[i][0].Prefix != "" {
+			return true
 		}
 	}
-	walk(start, nil)
-	return best, best != nil
+	return false
 }

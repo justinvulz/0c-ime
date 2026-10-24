@@ -17,7 +17,7 @@ func (d *Decoder) prepareMass(lat input.Lattice) {
 	}
 	d.longerEnd = make([]int, len(lat))
 	for at := range lat {
-		d.spans(lat, at, func(reading []zhuyin.Syllable, _ float64) {
+		d.spans(lat, at, func(reading []zhuyin.Syllable, _, _ float64) {
 			if len(reading) <= 1 {
 				return
 			}
